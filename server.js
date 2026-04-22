@@ -3,7 +3,7 @@ import express from "express";
 const app = express();
 app.use(express.json());
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const PAGE_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 
@@ -62,15 +62,15 @@ app.post("/webhook", async (req, res) => {
 
     if (!conversations.has(senderId)) conversations.set(senderId, []);
     const history = conversations.get(senderId);
-    history.push({ role: "user", parts: [{ text: userText }] });
+    history.push({ role: "user", content: userText });
     if (history.length > 20) history.splice(0, 2);
 
     try {
-      const reply = await getGeminiResponse(history);
-      history.push({ role: "model", parts: [{ text: reply }] });
+      const reply = await getGroqResponse(history);
+      history.push({ role: "assistant", content: reply });
       await sendMessage(senderId, reply);
     } catch (err) {
-      console.error("Lỗi:", err.message);
+      console.error("Lỗi Groq:", err.message);
       await sendMessage(senderId,
         "Dạ em xin lỗi, hệ thống đang bận. Anh/Chị vui lòng gọi 0257 7309 168 ạ!"
       );
@@ -78,41 +78,32 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-async function getGeminiResponse(history) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
-
-  const response = await fetch(url, {
+async function getGroqResponse(history) {
+  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${GROQ_API_KEY}`
+    },
     body: JSON.stringify({
-      system_instruction: {
-        parts: [{ text: SYSTEM_PROMPT }]
-      },
-      contents: history,
-      generationConfig: {
-        maxOutputTokens: 500,
-        temperature: 0.7,
-      }
+      model: "llama-3.1-8b-instant",
+      max_tokens: 500,
+      temperature: 0.7,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        ...history
+      ]
     })
   });
 
   const data = await response.json();
-  console.log("Gemini response:", JSON.stringify(data).substring(0, 300));
+  console.log("Groq response:", JSON.stringify(data).substring(0, 200));
 
   if (data.error) {
-    throw new Error(`Gemini API error: ${data.error.message}`);
+    throw new Error(`Groq error: ${data.error.message}`);
   }
 
-  if (!data.candidates || data.candidates.length === 0) {
-    throw new Error(`Không có candidates: ${JSON.stringify(data)}`);
-  }
-
-  const text = data.candidates[0]?.content?.parts?.[0]?.text;
-  if (!text) {
-    throw new Error(`Không đọc được text: ${JSON.stringify(data.candidates[0])}`);
-  }
-
-  return text;
+  return data.choices[0].message.content;
 }
 
 async function sendMessage(recipientId, text) {
