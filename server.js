@@ -1,10 +1,9 @@
 import express from "express";
-import Anthropic from "@anthropic-ai/sdk";
 
 const app = express();
 app.use(express.json());
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const PAGE_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 
@@ -41,6 +40,7 @@ QUY TẮC:
 
 const conversations = new Map();
 
+// Webhook verification
 app.get("/webhook", (req, res) => {
   if (req.query["hub.verify_token"] === VERIFY_TOKEN) {
     res.send(req.query["hub.challenge"]);
@@ -49,6 +49,7 @@ app.get("/webhook", (req, res) => {
   }
 });
 
+// Nhận tin nhắn từ Messenger
 app.post("/webhook", async (req, res) => {
   res.sendStatus(200);
   const body = req.body;
@@ -61,23 +62,18 @@ app.post("/webhook", async (req, res) => {
     const senderId = event.sender.id;
     const userText = event.message.text;
 
+    // Lưu lịch sử hội thoại
     if (!conversations.has(senderId)) conversations.set(senderId, []);
     const history = conversations.get(senderId);
-    history.push({ role: "user", content: userText });
+    history.push({ role: "user", parts: [{ text: userText }] });
     if (history.length > 20) history.splice(0, 2);
 
     try {
-      const response = await anthropic.messages.create({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 500,
-        system: SYSTEM_PROMPT,
-        messages: history,
-      });
-      const reply = response.content[0].text;
-      history.push({ role: "assistant", content: reply });
+      const reply = await getGeminiResponse(history);
+      history.push({ role: "model", parts: [{ text: reply }] });
       await sendMessage(senderId, reply);
     } catch (err) {
-      console.error("Lỗi:", err);
+      console.error("Lỗi Gemini:", err);
       await sendMessage(senderId,
         "Dạ em xin lỗi, hệ thống đang bận. Anh/Chị vui lòng gọi 0257 7309 168 ạ!"
       );
@@ -85,6 +81,30 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
+// Gọi Gemini API
+async function getGeminiResponse(history) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      system_instruction: {
+        parts: [{ text: SYSTEM_PROMPT }]
+      },
+      contents: history,
+      generationConfig: {
+        maxOutputTokens: 500,
+        temperature: 0.7,
+      }
+    })
+  });
+
+  const data = await response.json();
+  return data.candidates[0].content.parts[0].text;
+}
+
+// Gửi tin nhắn về Messenger
 async function sendMessage(recipientId, text) {
   await fetch(
     `https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_TOKEN}`,
@@ -99,4 +119,4 @@ async function sendMessage(recipientId, text) {
   );
 }
 
-app.listen(process.env.PORT || 3000, () => console.log("✅ Server đang chạy!"));
+app.listen(process.env.PORT || 3000, () => console.log("✅ Server VMH chạy rồi!"));
