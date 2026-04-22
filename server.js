@@ -40,7 +40,6 @@ QUY TẮC:
 
 const conversations = new Map();
 
-// Webhook verification
 app.get("/webhook", (req, res) => {
   if (req.query["hub.verify_token"] === VERIFY_TOKEN) {
     res.send(req.query["hub.challenge"]);
@@ -49,7 +48,6 @@ app.get("/webhook", (req, res) => {
   }
 });
 
-// Nhận tin nhắn từ Messenger
 app.post("/webhook", async (req, res) => {
   res.sendStatus(200);
   const body = req.body;
@@ -62,7 +60,6 @@ app.post("/webhook", async (req, res) => {
     const senderId = event.sender.id;
     const userText = event.message.text;
 
-    // Lưu lịch sử hội thoại
     if (!conversations.has(senderId)) conversations.set(senderId, []);
     const history = conversations.get(senderId);
     history.push({ role: "user", parts: [{ text: userText }] });
@@ -73,7 +70,7 @@ app.post("/webhook", async (req, res) => {
       history.push({ role: "model", parts: [{ text: reply }] });
       await sendMessage(senderId, reply);
     } catch (err) {
-      console.error("Lỗi Gemini:", err);
+      console.error("Lỗi:", err.message);
       await sendMessage(senderId,
         "Dạ em xin lỗi, hệ thống đang bận. Anh/Chị vui lòng gọi 0257 7309 168 ạ!"
       );
@@ -81,7 +78,6 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-// Gọi Gemini API
 async function getGeminiResponse(history) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
@@ -101,12 +97,26 @@ async function getGeminiResponse(history) {
   });
 
   const data = await response.json();
-  return data.candidates[0].content.parts[0].text;
+  console.log("Gemini response:", JSON.stringify(data).substring(0, 300));
+
+  if (data.error) {
+    throw new Error(`Gemini API error: ${data.error.message}`);
+  }
+
+  if (!data.candidates || data.candidates.length === 0) {
+    throw new Error(`Không có candidates: ${JSON.stringify(data)}`);
+  }
+
+  const text = data.candidates[0]?.content?.parts?.[0]?.text;
+  if (!text) {
+    throw new Error(`Không đọc được text: ${JSON.stringify(data.candidates[0])}`);
+  }
+
+  return text;
 }
 
-// Gửi tin nhắn về Messenger
 async function sendMessage(recipientId, text) {
-  await fetch(
+  const res = await fetch(
     `https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_TOKEN}`,
     {
       method: "POST",
@@ -117,6 +127,8 @@ async function sendMessage(recipientId, text) {
       }),
     }
   );
+  const data = await res.json();
+  if (data.error) console.error("Messenger error:", data.error);
 }
 
 app.listen(process.env.PORT || 3000, () => console.log("✅ Server VMH chạy rồi!"));
